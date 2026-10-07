@@ -1,0 +1,79 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net - Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidTask(data, userId) {
+      return data.id is string && data.id.size() <= 128
+        && data.userId == userId
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 500
+        && (!('description' in data) || (data.description is string && data.description.size() <= 2000))
+        && data.completed is bool
+        && (!('priority' in data) || (data.priority in ['low', 'medium', 'high']))
+        && (!('category' in data) || (data.category is string && data.category.size() <= 50))
+        && (!('dueDate' in data) || (data.dueDate is string && data.dueDate.size() <= 50))
+        && (!('dueTime' in data) || (data.dueTime is string && data.dueTime.size() <= 20))
+        && (!('reminderMinutes' in data) || (data.reminderMinutes is int || data.reminderMinutes is number))
+        && (!('googleEventId' in data) || (data.googleEventId is string && data.googleEventId.size() <= 256))
+        && (!('googleEventLink' in data) || (data.googleEventLink is string && data.googleEventLink.size() <= 1024))
+        && data.createdAt is string && data.createdAt.size() <= 50
+        && data.updatedAt is string && data.updatedAt.size() <= 50;
+    }
+
+    function isValidProfile(data, userId) {
+      return data.uid == userId
+        && data.email is string && data.email.size() <= 256
+        && (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 128))
+        && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 1024))
+        && (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 50));
+    }
+
+    match /users/{userId} {
+      match /tasks/{taskId} {
+        allow get: if isOwner(userId) && isValidId(taskId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(taskId)
+          && isValidTask(incoming(), userId)
+          && incoming().keys().hasAll(['id', 'userId', 'title', 'completed', 'createdAt', 'updatedAt'])
+          && incoming().keys().hasOnly(['id', 'userId', 'title', 'description', 'completed', 'priority', 'category', 'dueDate', 'dueTime', 'reminderMinutes', 'googleEventId', 'googleEventLink', 'createdAt', 'updatedAt']);
+        allow update: if isOwner(userId) && isValidId(taskId)
+          && isValidTask(incoming(), userId)
+          && incoming().id == existing().id
+          && incoming().userId == existing().userId
+          && incoming().createdAt == existing().createdAt;
+        allow delete: if isOwner(userId) && isValidId(taskId);
+      }
+
+      match /profile/{infoId} {
+        allow get: if isOwner(userId) && isValidId(infoId);
+        allow list: if isOwner(userId);
+        allow create, update: if isOwner(userId) && isValidId(infoId)
+          && isValidProfile(incoming(), userId);
+        allow delete: if isOwner(userId) && isValidId(infoId);
+      }
+    }
+  }
+}
